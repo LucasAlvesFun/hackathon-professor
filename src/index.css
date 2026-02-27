@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+  --color-primary-50: #0d2137;
+  --color-primary-100: #0f2b46;
+  --color-primary-200: #134068;
+  --color-primary-300: #1a5c8a;
+  --color-primary-400: #2196f3;
+  --color-primary-500: #00bcd4;
+  --color-primary-600: #00acc1;
+  --color-primary-700: #0097a7;
+  --color-primary-800: #00838f;
+  --color-primary-900: #006064;
+  --color-accent-500: #26c6da;
+  --color-accent-600: #00bcd4;
+  --color-accent-700: #0097a7;
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-danger: #ef5350;
+  --color-dark-900: #0a0f1a;
+  --color-dark-800: #0f1729;
+  --color-dark-700: #141e33;
+  --color-dark-600: #1a2740;
+  --color-dark-500: #22334d;
+  --color-dark-400: #2a3f5f;
+  --color-dark-300: #3a5278;
+  --color-dark-200: #4a6490;
+  --color-dark-100: #7a96b8;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c1c1c1 transparent;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
