@@ -82,12 +82,14 @@ export function ClassroomProvider({ children }) {
   const saveLessonPlan = useCallback(async (plan) => {
     setLessonPlan(plan);
     const userId = user?.username || 'anonymous';
-    const planId = `plan_${userId}_${Date.now()}`;
+    const now = new Date().toISOString();
+    const titulo = plan?.plano?.titulo || 'Plano sem título';
+    const planId = `plan_${Date.now()}`;
     try {
       // Save as current plan (for quick load)
-      await dbUpsert('lesson_plans', `current_${userId}`, { ...plan, userId, updatedAt: new Date().toISOString() });
-      // Also save a historical copy
-      await dbPost('lesson_plans', { _id: planId, ...plan, userId, createdAt: new Date().toISOString() });
+      await dbUpsert('lesson_plans', `current_${userId}`, { ...plan, userId, titulo, updatedAt: now });
+      // Also save a named copy
+      await dbPost('lesson_plans', { _id: planId, ...plan, userId, titulo, createdAt: now, updatedAt: now });
       // Refresh saved plans list
       await listSavedPlans();
     } catch (err) {
@@ -116,11 +118,28 @@ export function ClassroomProvider({ children }) {
   const listSavedPlans = useCallback(async () => {
     try {
       const userId = user?.username || 'anonymous';
-      const data = await dbGet('lesson_plans', `userId=${userId}`);
-      const plans = Array.isArray(data) ? data.filter(p => !p._id?.startsWith('current_')) : [];
+      // Fetch all plans for this user
+      const data = await dbGet('lesson_plans', `userId=${encodeURIComponent(userId)}`);
+      let plans = Array.isArray(data) ? data : [];
+      // If query filter didn't work (API returned all), filter client-side
+      if (plans.length > 0 && plans.some(p => p.userId && p.userId !== userId)) {
+        plans = plans.filter(p => p.userId === userId);
+      }
+      // If still empty, try fetching all and filtering
+      if (plans.length === 0) {
+        const allData = await dbGet('lesson_plans');
+        plans = Array.isArray(allData) ? allData.filter(p => p.userId === userId) : [];
+      }
+      // Sort by date (newest first)
+      plans.sort((a, b) => {
+        const dateA = new Date(a.updatedAt || a.createdAt || 0);
+        const dateB = new Date(b.updatedAt || b.createdAt || 0);
+        return dateB - dateA;
+      });
       setSavedPlans(plans);
       return plans;
-    } catch {
+    } catch (err) {
+      console.error('Erro ao listar planos:', err);
       setSavedPlans([]);
       return [];
     }

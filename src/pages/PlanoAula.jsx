@@ -598,15 +598,20 @@ export default function PlanoAula() {
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-white truncate">
-                          {plan.plano?.titulo || 'Plano sem título'}
+                          {plan.plano?.titulo || plan.titulo || 'Plano sem título'}
                         </h3>
+                        {plan._id?.startsWith('current_') && (
+                          <span className="inline-block mt-1 text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded-full">
+                            Plano atual
+                          </span>
+                        )}
                         {plan.plano?.ementa && (
                           <p className="text-sm text-dark-100 mt-1 line-clamp-2">{plan.plano.ementa}</p>
                         )}
                         <div className="flex items-center gap-3 mt-2">
-                          {plan.createdAt && (
+                          {(plan.updatedAt || plan.createdAt) && (
                             <span className="text-xs text-dark-100">
-                              {new Date(plan.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              {new Date(plan.updatedAt || plan.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </span>
                           )}
                           {plan.plano?.etapas && (
