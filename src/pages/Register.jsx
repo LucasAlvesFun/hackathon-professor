@@ -8,7 +8,7 @@ export default function Register() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState('');
-  const { login, loading } = useAuth();
+  const { register, loading } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -19,7 +19,7 @@ export default function Register() {
       return;
     }
     try {
-      await login(username, password);
+      await register(username, password, name);
       navigate('/app');
     } catch {
       setLocalError('Falha ao criar conta. Tente novamente.');

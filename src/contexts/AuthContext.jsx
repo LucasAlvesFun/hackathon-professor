@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { login as apiLogin } from '../services/api';
+import { login as apiLogin, createPlayer } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -36,6 +36,33 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const registerAction = async (username, password, name) => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Create player with role=professor
+      await createPlayer({
+        _id: username,
+        name: name || username,
+        email: username,
+        password,
+        extra: { role: 'professor' },
+      });
+      // After creating, login
+      const data = await apiLogin(username, password);
+      setToken(data.access_token);
+      const userData = { username, name: name || username };
+      setUser(userData);
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      return data;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('user_data');
@@ -44,7 +71,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, error, login: loginAction, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, token, loading, error, login: loginAction, register: registerAction, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );
