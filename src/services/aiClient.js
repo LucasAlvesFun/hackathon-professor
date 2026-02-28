@@ -134,6 +134,9 @@ Se o perfil da turma e/ou insights do professor forem fornecidos, adapte o plano
     // fallback
   }
   return { raw: result };
+}
+
+export async function analyzeClassroom(data) {
   const prompt = `Você é um analista educacional especialista em identificação de padrões comportamentais em sala de aula. Analise os dados da turma abaixo com atenção especial para os "alunos invisíveis".
 
 ## O que são ALUNOS INVISÍVEIS?
