@@ -4,13 +4,14 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
-async function callGemini(prompt) {
+async function callGemini(prompt, options = {}) {
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: prompt,
     config: {
-      temperature: 0.7,
-      maxOutputTokens: 8192,
+      temperature: options.temperature ?? 0.7,
+      maxOutputTokens: options.maxOutputTokens ?? 8192,
+      ...(options.responseMimeType ? { responseMimeType: options.responseMimeType } : {}),
     },
   });
   return response.text || '';
@@ -66,7 +67,9 @@ ${structuredContext.insightsProfessor ? `- Ideias/insights do professor sobre co
 ${structuredContext.topicosExtraidos ? `- Tópicos extraídos do material: ${JSON.stringify(structuredContext.topicosExtraidos)}` : ''}
 ${structuredContext.conteudoExtra ? `- Conteúdo adicional: ${structuredContext.conteudoExtra}` : ''}
 
-Gere um calendário completo de aulas no seguinte formato JSON:
+IMPORTANTE: Responda SOMENTE com o JSON abaixo, sem nenhum texto antes ou depois. Não inclua explicações, introduções ou comentários.
+
+Formato JSON obrigatório:
 {
   "plano": {
     "titulo": "string",
@@ -80,9 +83,9 @@ Gere um calendário completo de aulas no seguinte formato JSON:
             "data": "YYYY-MM-DD",
             "tipo": "aula" | "prova" | "trabalho" | "revisao" | "recesso",
             "titulo": "string",
-            "conteudo": "string",
-            "objetivos": ["string"],
-            "referencias": ["string"]
+            "conteudo": "string (máximo 2 frases)",
+            "objetivos": ["string (máximo 3 objetivos)"],
+            "referencias": ["string (máximo 2 referências curtas)"]
           }
         ]
       }
@@ -90,10 +93,13 @@ Gere um calendário completo de aulas no seguinte formato JSON:
   }
 }
 
-Distribua os conteúdos de forma lógica e progressiva. Inclua aulas de revisão antes de provas.
-Se o perfil da turma e/ou insights do professor forem fornecidos, adapte o plano para refletir essas características, ajustando linguagem, exemplos, dinâmicas e nível de profundidade conforme indicado.`;
+Regras:
+- Distribua os conteúdos de forma lógica e progressiva.
+- Inclua aulas de revisão antes de provas.
+- Seja CONCISO no conteúdo e objetivos para manter o JSON compacto.
+- Se o perfil da turma e/ou insights do professor forem fornecidos, adapte o plano conforme indicado.`;
 
-  const result = await callGemini(prompt);
+  const result = await callGemini(prompt, { maxOutputTokens: 65536, responseMimeType: 'application/json' });
   try {
     // Clean up - remove code fences
     let text = result.replace(/```(?:json)?\s*\n?/g, '').replace(/```/g, '').trim();
