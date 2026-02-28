@@ -79,8 +79,33 @@ export function ClassroomProvider({ children }) {
     return null;
   }, []);
 
+  // Normalize plan: ensure .plano exists even if stored as .raw
+  const normalizePlan = useCallback((plan) => {
+    if (!plan) return null;
+    if (plan.plano?.etapas) return plan;
+    if (plan.raw) {
+      try {
+        const text = plan.raw;
+        let depth = 0, start = -1, parsed = null;
+        for (let i = 0; i < text.length; i++) {
+          if (text[i] === '{') { if (depth === 0) start = i; depth++; }
+          else if (text[i] === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+              try { parsed = JSON.parse(text.substring(start, i + 1)); break; } catch { start = -1; }
+            }
+          }
+        }
+        if (parsed?.plano?.etapas) return { ...plan, plano: parsed.plano };
+        if (parsed?.etapas) return { ...plan, plano: parsed };
+      } catch { /* keep as-is */ }
+    }
+    return plan;
+  }, []);
+
   const saveLessonPlan = useCallback(async (plan) => {
-    setLessonPlan(plan);
+    const normalized = normalizePlan(plan) || plan;
+    setLessonPlan(normalized);
     const userId = user?.username || 'anonymous';
     const now = new Date().toISOString();
     const titulo = plan?.plano?.titulo || 'Plano sem título';
@@ -102,14 +127,16 @@ export function ClassroomProvider({ children }) {
       const userId = user?.username || 'anonymous';
       const data = await dbGet('lesson_plans', `_id=current_${userId}`);
       if (data && data.length > 0) {
-        setLessonPlan(data[0]);
-        return data[0];
+        const plan = normalizePlan(data[0]);
+        setLessonPlan(plan);
+        return plan;
       }
       // Fallback: load any plan from this user
       const allData = await dbGet('lesson_plans', `userId=${userId}`);
       if (allData && allData.length > 0) {
-        setLessonPlan(allData[0]);
-        return allData[0];
+        const plan = normalizePlan(allData[0]);
+        setLessonPlan(plan);
+        return plan;
       }
     } catch { /* ignore */ }
     return null;
@@ -146,7 +173,8 @@ export function ClassroomProvider({ children }) {
   }, [user]);
 
   const loadSavedPlan = useCallback(async (plan) => {
-    setLessonPlan(plan);
+    const normalized = normalizePlan(plan) || plan;
+    setLessonPlan(normalized);
   }, []);
 
   return (

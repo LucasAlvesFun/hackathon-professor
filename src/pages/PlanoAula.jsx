@@ -43,6 +43,31 @@ export default function PlanoAula() {
   const [editingAula, setEditingAula] = useState(null);
   const [step, setStep] = useState(1);
 
+  // Normalize lessonPlan: if it has .raw with valid JSON, parse it
+  const normalizedPlan = (() => {
+    if (lessonPlan?.plano?.etapas) return lessonPlan;
+    if (lessonPlan?.raw) {
+      try {
+        const fenceMatch = lessonPlan.raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+        const text = fenceMatch ? fenceMatch[1] : lessonPlan.raw;
+        let depth = 0, start = -1, parsed = null;
+        for (let i = 0; i < text.length; i++) {
+          if (text[i] === '{') { if (depth === 0) start = i; depth++; }
+          else if (text[i] === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+              try { parsed = JSON.parse(text.substring(start, i + 1)); break; } catch { start = -1; }
+            }
+          }
+        }
+        if (!parsed) parsed = JSON.parse(text.trim());
+        if (parsed?.plano?.etapas) return { ...lessonPlan, plano: parsed.plano };
+        if (parsed?.etapas) return { ...lessonPlan, plano: parsed };
+      } catch { /* keep raw */ }
+    }
+    return lessonPlan;
+  })();
+
   useEffect(() => {
     loadCourseConfig().then(c => { if (c) setConfig(prev => ({ ...prev, ...c })); });
     loadLessonPlan();
@@ -435,16 +460,16 @@ export default function PlanoAula() {
           )}
 
           {/* Calendar View */}
-          {lessonPlan?.plano && (
+          {normalizedPlan?.plano && (
             <div className="space-y-6">
               <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600">
-                <h2 className="text-xl font-bold text-white mb-1">{lessonPlan.plano.titulo}</h2>
-                {lessonPlan.plano.ementa && (
-                  <p className="text-sm text-dark-100">{lessonPlan.plano.ementa}</p>
+                <h2 className="text-xl font-bold text-white mb-1">{normalizedPlan.plano.titulo}</h2>
+                {normalizedPlan.plano.ementa && (
+                  <p className="text-sm text-dark-100">{normalizedPlan.plano.ementa}</p>
                 )}
               </div>
 
-              {lessonPlan.plano.etapas?.map((etapa, etapaIdx) => (
+              {normalizedPlan.plano.etapas?.map((etapa, etapaIdx) => (
                 <div key={etapaIdx} className="bg-dark-800 rounded-2xl border border-dark-600 overflow-hidden">
                   <div className="p-4 bg-dark-700 border-b border-dark-600 flex items-center justify-between">
                     <h3 className="font-bold text-white">{etapa.nome || `Etapa ${etapaIdx + 1}`}</h3>
@@ -521,6 +546,16 @@ export default function PlanoAula() {
                               </div>
                               <p className="font-medium text-sm">{aula.titulo}</p>
                               {aula.conteudo && <p className="text-xs mt-1 opacity-75">{aula.conteudo}</p>}
+                              {aula.objetivos?.length > 0 && (
+                                <div className="mt-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide opacity-60 mb-1">Objetivos</p>
+                                  <ul className="text-xs opacity-75 space-y-0.5 list-disc list-inside">
+                                    {aula.objetivos.map((obj, i) => (
+                                      <li key={i}>{obj}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                               {aula.referencias?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2">
                                   {aula.referencias.map((ref, i) => (
@@ -556,7 +591,7 @@ export default function PlanoAula() {
             </div>
           )}
 
-          {lessonPlan?.raw && (
+          {normalizedPlan?.raw && !normalizedPlan?.plano && (
             <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600">
               <h3 className="font-bold text-white mb-3">Resultado da IA</h3>
               <pre className="text-sm text-gray-300 whitespace-pre-wrap bg-dark-700 p-4 rounded-xl">{lessonPlan.raw}</pre>

@@ -95,17 +95,45 @@ Se o perfil da turma e/ou insights do professor forem fornecidos, adapte o plano
 
   const result = await callGemini(prompt);
   try {
-    const jsonMatch = result.match(/```json\n?([\s\S]*?)```/) || result.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[1] || jsonMatch[0]);
+    // Try multiple parsing strategies
+    let parsed = null;
+
+    // Strategy 1: JSON inside code fence
+    const fenceMatch = result.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) {
+      try { parsed = JSON.parse(fenceMatch[1].trim()); } catch { /* try next */ }
+    }
+
+    // Strategy 2: Find the outermost { ... } block
+    if (!parsed) {
+      let depth = 0, start = -1;
+      for (let i = 0; i < result.length; i++) {
+        if (result[i] === '{') { if (depth === 0) start = i; depth++; }
+        else if (result[i] === '}') {
+          depth--;
+          if (depth === 0 && start !== -1) {
+            try { parsed = JSON.parse(result.substring(start, i + 1)); break; } catch { start = -1; }
+          }
+        }
+      }
+    }
+
+    // Strategy 3: Direct parse
+    if (!parsed) {
+      try { parsed = JSON.parse(result.trim()); } catch { /* fallback */ }
+    }
+
+    if (parsed) {
+      // Ensure the structure has 'plano' wrapper
+      if (parsed.plano && parsed.plano.etapas) return parsed;
+      if (parsed.titulo && parsed.etapas) return { plano: parsed };
+      if (parsed.etapas) return { plano: parsed };
+      return parsed;
     }
   } catch {
     // fallback
   }
   return { raw: result };
-}
-
-export async function analyzeClassroom(data) {
   const prompt = `Você é um analista educacional especialista em identificação de padrões comportamentais em sala de aula. Analise os dados da turma abaixo com atenção especial para os "alunos invisíveis".
 
 ## O que são ALUNOS INVISÍVEIS?

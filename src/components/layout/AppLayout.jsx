@@ -4,7 +4,7 @@ import { LayoutDashboard, Users, BookOpen, MessageCircle, LogOut, Bot, Settings 
 
 const navItems = [
   { to: '/app', icon: LayoutDashboard, label: 'Painel', end: true },
-  { to: '/app/alunos', icon: Users, label: 'Turmas' },
+  { to: '/app/alunos', icon: Users, label: 'Alunos' },
   { to: '/app/plano', icon: BookOpen, label: 'Planos de Aula' },
   { to: '/app/chat', icon: MessageCircle, label: 'Chat IA' },
 ];
