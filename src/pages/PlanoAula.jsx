@@ -43,27 +43,38 @@ export default function PlanoAula() {
   const [editingAula, setEditingAula] = useState(null);
   const [step, setStep] = useState(1);
 
+  // Helper to try parsing JSON from a raw string
+  const tryParseRawPlan = (raw) => {
+    if (!raw || typeof raw !== 'string') return null;
+    try {
+      // Remove code fences
+      let text = raw.replace(/```(?:json)?\s*\n?/g, '').replace(/```/g, '').trim();
+      // Try direct parse first
+      try {
+        const direct = JSON.parse(text);
+        if (direct?.plano?.etapas) return direct;
+        if (direct?.etapas) return { plano: direct };
+      } catch { /* try brace matching */ }
+      // Find first { to last }
+      const firstBrace = text.indexOf('{');
+      const lastBrace = text.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        const jsonStr = text.substring(firstBrace, lastBrace + 1);
+        const parsed = JSON.parse(jsonStr);
+        if (parsed?.plano?.etapas) return parsed;
+        if (parsed?.etapas) return { plano: parsed };
+        if (parsed?.plano) return parsed;
+      }
+    } catch { /* parsing failed */ }
+    return null;
+  };
+
   // Normalize lessonPlan: if it has .raw with valid JSON, parse it
   const normalizedPlan = (() => {
     if (lessonPlan?.plano?.etapas) return lessonPlan;
     if (lessonPlan?.raw) {
-      try {
-        const fenceMatch = lessonPlan.raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-        const text = fenceMatch ? fenceMatch[1] : lessonPlan.raw;
-        let depth = 0, start = -1, parsed = null;
-        for (let i = 0; i < text.length; i++) {
-          if (text[i] === '{') { if (depth === 0) start = i; depth++; }
-          else if (text[i] === '}') {
-            depth--;
-            if (depth === 0 && start !== -1) {
-              try { parsed = JSON.parse(text.substring(start, i + 1)); break; } catch { start = -1; }
-            }
-          }
-        }
-        if (!parsed) parsed = JSON.parse(text.trim());
-        if (parsed?.plano?.etapas) return { ...lessonPlan, plano: parsed.plano };
-        if (parsed?.etapas) return { ...lessonPlan, plano: parsed };
-      } catch { /* keep raw */ }
+      const parsed = tryParseRawPlan(lessonPlan.raw);
+      if (parsed) return { ...lessonPlan, ...parsed };
     }
     return lessonPlan;
   })();
@@ -101,11 +112,16 @@ export default function PlanoAula() {
     setGenerating(true);
     try {
       await saveCourseConfig(config);
-      const result = await generateLessonPlan({
+      let result = await generateLessonPlan({
         ...config,
         topicosExtraidos: extractedTopics,
         conteudoExtra: bibliography + '\n' + links,
       });
+      // If result came back as raw, try to parse it now
+      if (result?.raw && !result?.plano) {
+        const parsed = tryParseRawPlan(result.raw);
+        if (parsed) result = { ...result, ...parsed };
+      }
       setLessonPlan(result);
       await saveLessonPlan(result);
       setShowConfig(false);
