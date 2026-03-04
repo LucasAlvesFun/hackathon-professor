@@ -6,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 async function callGemini(prompt, options = {}) {
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.0-flash',
     contents: prompt,
     config: {
       temperature: options.temperature ?? 0.7,

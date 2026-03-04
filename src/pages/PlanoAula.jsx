@@ -1,40 +1,98 @@
 import { useState, useEffect } from 'react';
 import { useClassroom } from '../contexts/ClassroomContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { generateLessonPlan, processNotebookLM } from '../services/aiClient';
-import { BookOpen, Calendar, ChevronDown, ChevronUp, Edit3, FileUp, Loader2, Plus, Save, Sparkles, Trash2, Upload, X, GraduationCap, Clock, Award, Users, FolderOpen, Target, BookMarked, CheckCircle2, FileText, AlertTriangle } from 'lucide-react';
+import {
+  BookOpen, Calendar, ChevronDown, ChevronUp, Edit3, FileUp, Loader2, Plus, Save,
+  Sparkles, Trash2, Upload, GraduationCap, Clock, Award, Users, FolderOpen,
+  Target, BookMarked, CheckCircle2, FileText, RefreshCw,
+} from 'lucide-react';
 
 const NIVEIS = ['Ensino Fundamental', 'Ensino Médio', 'Graduação', 'Pós-graduação'];
 const ESTRUTURAS = ['Anual', 'Semestral'];
 const SUBDIVISOES = ['Bimestral', 'Trimestral', 'Etapas'];
 
-// Beautiful renderer for raw AI output when JSON parsing fails
+const INITIAL_CONFIG = {
+  nivel: 'Graduação',
+  curso: '',
+  disciplina: '',
+  objetivo: '',
+  estrutura: 'Semestral',
+  subdivisao: 'Etapas',
+  numEtapas: 3,
+  provasPorEtapa: 1,
+  trabalhosPorEtapa: 1,
+  pesoProva: 60,
+  pesoTrabalho: 40,
+  mediaMinima: 7,
+  frequenciaMinima: 75,
+  aulasPorSemana: 2,
+  duracaoAula: 50,
+  dataInicio: '',
+  dataFim: '',
+  diasAula: ['seg', 'qua'],
+  perfilTurma: '',
+  insightsProfessor: '',
+};
+
+// Robust JSON parser for AI output
+function tryParseRawPlan(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+
+  const attemptParse = (str) => {
+    try {
+      const parsed = JSON.parse(str);
+      if (parsed?.plano?.etapas) return parsed;
+      if (parsed?.etapas) return { plano: parsed };
+      if (parsed?.plano) return parsed;
+    } catch { /* ignore */ }
+    try {
+      const fixed = str.replace(/,\s*([}\]])/g, '$1');
+      const parsed = JSON.parse(fixed);
+      if (parsed?.plano?.etapas) return parsed;
+      if (parsed?.etapas) return { plano: parsed };
+      if (parsed?.plano) return parsed;
+    } catch { /* ignore */ }
+    return null;
+  };
+
+  // Strategy 1: Code fences
+  const codeFenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (codeFenceMatch) {
+    const result = attemptParse(codeFenceMatch[1].trim());
+    if (result) return result;
+  }
+
+  // Strategy 2: Full text without fences
+  const text = raw.replace(/```(?:json)?\s*\n?/g, '').replace(/```/g, '').trim();
+  let result = attemptParse(text);
+  if (result) return result;
+
+  // Strategy 3: Outermost braces
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    result = attemptParse(text.substring(firstBrace, lastBrace + 1));
+    if (result) return result;
+  }
+
+  return null;
+}
+
+// Normalize lessonPlan: parse .raw if needed
+function normalizePlan(plan) {
+  if (!plan) return null;
+  if (plan?.plano?.etapas) return plan;
+  if (plan?.raw) {
+    const parsed = tryParseRawPlan(plan.raw);
+    if (parsed) return { ...plan, ...parsed };
+  }
+  return plan;
+}
+
+// Formatted renderer for raw AI output when structured parsing fails
 function FormattedRawContent({ raw }) {
   if (!raw) return null;
-
-  const segments = [];
-  const codeBlockRegex = /(```(?:\w*)\s*\n?[\s\S]*?```)/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = codeBlockRegex.exec(raw)) !== null) {
-    if (match.index > lastIndex) {
-      const textContent = raw.substring(lastIndex, match.index).trim();
-      if (textContent) segments.push({ type: 'text', content: textContent });
-    }
-    const codeContent = match[0]
-      .replace(/```\w*\s*\n?/, '')
-      .replace(/```$/, '')
-      .trim();
-    if (codeContent) segments.push({ type: 'code', content: codeContent });
-    lastIndex = codeBlockRegex.lastIndex;
-  }
-
-  if (lastIndex < raw.length) {
-    const remaining = raw.substring(lastIndex).trim();
-    if (remaining) segments.push({ type: 'text', content: remaining });
-  }
-
-  if (segments.length === 0) segments.push({ type: 'text', content: raw });
 
   const renderInline = (text) => {
     if (!text.includes('**')) return text;
@@ -46,96 +104,89 @@ function FormattedRawContent({ raw }) {
     );
   };
 
-  const renderLine = (line, key) => {
-    const trimmed = line.trim();
-    if (!trimmed) return <div key={key} className="h-1" />;
-
-    const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)/);
-    if (headingMatch) {
-      const styles = {
-        1: 'text-xl font-bold text-white mt-5 first:mt-0',
-        2: 'text-lg font-semibold text-white mt-4 first:mt-0',
-        3: 'text-base font-medium text-gray-200 mt-3 first:mt-0',
-      };
-      return <p key={key} className={styles[headingMatch[1].length]}>{renderInline(headingMatch[2])}</p>;
-    }
-
-    if (trimmed.match(/^[-*•]\s/)) {
-      return (
-        <div key={key} className="flex items-start gap-2 ml-3">
-          <span className="text-primary-400 mt-1.5 text-[8px]">●</span>
-          <span className="text-sm text-gray-300">{renderInline(trimmed.replace(/^[-*•]\s/, ''))}</span>
-        </div>
-      );
-    }
-
-    const numMatch = trimmed.match(/^(\d+)[\.)\s]+(.*)/); 
-    if (numMatch) {
-      return (
-        <div key={key} className="flex items-start gap-2 ml-3">
-          <span className="text-primary-400 font-semibold text-sm min-w-[20px]">{numMatch[1]}.</span>
-          <span className="text-sm text-gray-300">{renderInline(numMatch[2])}</span>
-        </div>
-      );
-    }
-
-    return <p key={key} className="text-sm text-gray-300 leading-relaxed">{renderInline(trimmed)}</p>;
-  };
+  const lines = raw.split('\n');
 
   return (
-    <div className="space-y-4">
-      {segments.map((seg, i) => (
-        <div key={i} className="bg-dark-800 p-6 rounded-2xl border border-dark-600">
-          {seg.type === 'code' ? (
-            <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono bg-dark-700 p-4 rounded-xl overflow-x-auto leading-relaxed border border-dark-500">{seg.content}</pre>
-          ) : (
-            <div className="space-y-1.5">
-              {seg.content.split('\n').map((line, j) => renderLine(line, j))}
-            </div>
-          )}
-        </div>
-      ))}
+    <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600 space-y-2">
+      <h3 className="font-bold text-white mb-3">Resultado da IA</h3>
+      <div className="space-y-1.5">
+        {lines.map((line, i) => {
+          const trimmed = line.trim();
+          if (!trimmed) return <div key={i} className="h-1" />;
+
+          const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)/);
+          if (headingMatch) {
+            const styles = {
+              1: 'text-xl font-bold text-white mt-5 first:mt-0',
+              2: 'text-lg font-semibold text-white mt-4 first:mt-0',
+              3: 'text-base font-medium text-gray-200 mt-3 first:mt-0',
+            };
+            return <p key={i} className={styles[headingMatch[1].length]}>{renderInline(headingMatch[2])}</p>;
+          }
+
+          if (trimmed.match(/^[-*•]\s/)) {
+            return (
+              <div key={i} className="flex items-start gap-2 ml-3">
+                <span className="text-primary-400 mt-1.5 text-[8px]">●</span>
+                <span className="text-sm text-gray-300">{renderInline(trimmed.replace(/^[-*•]\s/, ''))}</span>
+              </div>
+            );
+          }
+
+          const numMatch = trimmed.match(/^(\d+)[.)]\s+(.*)/);
+          if (numMatch) {
+            return (
+              <div key={i} className="flex items-start gap-2 ml-3">
+                <span className="text-primary-400 font-semibold text-sm min-w-[20px]">{numMatch[1]}.</span>
+                <span className="text-sm text-gray-300">{renderInline(numMatch[2])}</span>
+              </div>
+            );
+          }
+
+          return <p key={i} className="text-sm text-gray-300 leading-relaxed">{renderInline(trimmed)}</p>;
+        })}
+      </div>
     </div>
   );
 }
 
+const tipoConfig = {
+  aula: { label: 'Aula', icon: BookOpen, bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400', badge: 'bg-blue-500/20 text-blue-300' },
+  prova: { label: 'Prova', icon: FileText, bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400', badge: 'bg-red-500/20 text-red-300' },
+  trabalho: { label: 'Trabalho', icon: Award, bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', badge: 'bg-amber-500/20 text-amber-300' },
+  revisao: { label: 'Revisão', icon: CheckCircle2, bg: 'bg-violet-500/10', border: 'border-violet-500/30', text: 'text-violet-400', badge: 'bg-violet-500/20 text-violet-300' },
+  recesso: { label: 'Recesso', icon: Calendar, bg: 'bg-dark-600', border: 'border-dark-500', text: 'text-dark-100', badge: 'bg-dark-500 text-dark-100' },
+};
+
 export default function PlanoAula() {
-  const { saveCourseConfig, loadCourseConfig, saveLessonPlan, loadLessonPlan, lessonPlan, courseConfig, setCourseConfig, setLessonPlan, savedPlans, listSavedPlans, loadSavedPlan } = useClassroom();
+  const {
+    saveCourseConfig, loadCourseConfig,
+    saveLessonPlan, lessonPlan, setLessonPlan, resetLessonPlan,
+    savedPlans, listSavedPlans, loadSavedPlan,
+  } = useClassroom();
+  const { addNotification } = useNotifications();
 
-  const [config, setConfig] = useState({
-    nivel: 'Graduação',
-    curso: '',
-    disciplina: '',
-    objetivo: '',
-    estrutura: 'Semestral',
-    subdivisao: 'Etapas',
-    numEtapas: 3,
-    provasPorEtapa: 1,
-    trabalhosPorEtapa: 1,
-    pesoProva: 60,
-    pesoTrabalho: 40,
-    mediaMinima: 7,
-    frequenciaMinima: 75,
-    aulasPorSemana: 2,
-    duracaoAula: 50,
-    dataInicio: '',
-    dataFim: '',
-    diasAula: ['seg', 'qua'],
-    perfilTurma: '',
-    insightsProfessor: '',
-  });
-
+  // Task 1: Local form state — always starts fresh (no auto-load of previous plan)
+  const [config, setConfig] = useState({ ...INITIAL_CONFIG });
   const [pdfContent, setPdfContent] = useState('');
   const [links, setLinks] = useState('');
   const [bibliography, setBibliography] = useState('');
   const [generating, setGenerating] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [extractedTopics, setExtractedTopics] = useState(null);
-  const [showConfig, setShowConfig] = useState(true);
   const [editingAula, setEditingAula] = useState(null);
   const [step, setStep] = useState(1);
   const [expandedEtapas, setExpandedEtapas] = useState({});
   const [expandedAulas, setExpandedAulas] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  // Task 1: Reset plan state on mount — each visit starts clean
+  useEffect(() => {
+    resetLessonPlan();
+    listSavedPlans();
+    // Task 2: Load course_config silently in background for AI prompt context only
+    loadCourseConfig();
+  }, []);
 
   const toggleEtapa = (idx) => {
     setExpandedEtapas(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -146,159 +197,8 @@ export default function PlanoAula() {
     setExpandedAulas(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Repair truncated JSON by closing open strings, arrays, objects
-  const repairTruncatedJSON = (str) => {
-    if (!str || typeof str !== 'string') return str;
-    let text = str.trim();
-    // Close any unclosed strings
-    let inString = false;
-    let escaped = false;
-    for (let i = 0; i < text.length; i++) {
-      if (escaped) { escaped = false; continue; }
-      if (text[i] === '\\\\') { escaped = true; continue; }
-      if (text[i] === '"') inString = !inString;
-    }
-    if (inString) text += '"';
-    // Remove trailing commas or incomplete key-value pairs
-    text = text.replace(/,\s*$/, '');
-    text = text.replace(/,\s*"[^"]*"?\s*:?\s*$/, '');
-    // Count open brackets/braces and close them
-    let openBraces = 0, openBrackets = 0;
-    inString = false;
-    escaped = false;
-    for (let i = 0; i < text.length; i++) {
-      if (escaped) { escaped = false; continue; }
-      if (text[i] === '\\\\') { escaped = true; continue; }
-      if (text[i] === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (text[i] === '{') openBraces++;
-      else if (text[i] === '}') openBraces--;
-      else if (text[i] === '[') openBrackets++;
-      else if (text[i] === ']') openBrackets--;
-    }
-    // Close in reverse order of what's open
-    for (let i = 0; i < openBrackets; i++) text += ']';
-    for (let i = 0; i < openBraces; i++) text += '}';
-    return text;
-  };
-
-  // Robust helper to parse JSON plan from raw AI output (5 strategies)
-  const tryParseRawPlan = (raw) => {
-    if (!raw || typeof raw !== 'string') return null;
-
-    const attemptParse = (str) => {
-      try {
-        const parsed = JSON.parse(str);
-        if (parsed?.plano?.etapas) return parsed;
-        if (parsed?.etapas) return { plano: parsed };
-        if (parsed?.plano) return parsed;
-      } catch { /* try with trailing comma fix */ }
-      try {
-        const fixed = str.replace(/,\s*([}\]])/g, '$1');
-        const parsed = JSON.parse(fixed);
-        if (parsed?.plano?.etapas) return parsed;
-        if (parsed?.etapas) return { plano: parsed };
-        if (parsed?.plano) return parsed;
-      } catch { /* try with repair */ }
-      try {
-        const repaired = repairTruncatedJSON(str);
-        const parsed = JSON.parse(repaired);
-        if (parsed?.plano?.etapas) return parsed;
-        if (parsed?.etapas) return { plano: parsed };
-        if (parsed?.plano) return parsed;
-      } catch { /* nope */ }
-      return null;
-    };
-
-    // Strategy 1: Extract from code fences
-    const codeFenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-    if (codeFenceMatch) {
-      const result = attemptParse(codeFenceMatch[1].trim());
-      if (result) return result;
-    }
-
-    // Strategy 2: Remove code fences and try full text
-    const text = raw.replace(/```(?:json)?\s*\n?/g, '').replace(/```/g, '').trim();
-    let result = attemptParse(text);
-    if (result) return result;
-
-    // Strategy 3: Brace matching - outermost { }
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      result = attemptParse(text.substring(firstBrace, lastBrace + 1));
-      if (result) return result;
-    }
-
-    // Strategy 4: Find "plano" key and manual brace matching
-    const planoIdx = raw.indexOf('"plano"');
-    if (planoIdx !== -1) {
-      let startIdx = raw.lastIndexOf('{', planoIdx);
-      if (startIdx !== -1) {
-        let depth = 0;
-        for (let i = startIdx; i < raw.length; i++) {
-          if (raw[i] === '{') depth++;
-          else if (raw[i] === '}') {
-            depth--;
-            if (depth === 0) {
-              result = attemptParse(raw.substring(startIdx, i + 1));
-              if (result) return result;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // Strategy 5: Walk raw finding JSON objects that contain "etapas"
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i] === '{') {
-        let depth = 0;
-        for (let j = i; j < raw.length; j++) {
-          if (raw[j] === '{') depth++;
-          else if (raw[j] === '}') {
-            depth--;
-            if (depth === 0) {
-              const candidate = raw.substring(i, j + 1);
-              if (candidate.includes('"etapas"')) {
-                result = attemptParse(candidate);
-                if (result) return result;
-              }
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    return null;
-  };
-
-  // Normalize lessonPlan: if it has .raw with valid JSON, parse it
-  const normalizedPlan = (() => {
-    if (lessonPlan?.plano?.etapas) return lessonPlan;
-    if (lessonPlan?.raw) {
-      const parsed = tryParseRawPlan(lessonPlan.raw);
-      if (parsed) return { ...lessonPlan, ...parsed };
-    }
-    return lessonPlan;
-  })();
-
-  useEffect(() => {
-    loadCourseConfig().then(c => { if (c) setConfig(prev => ({ ...prev, ...c })); });
-    loadLessonPlan();
-    listSavedPlans();
-  }, []);
-
-  // Auto-update lessonPlan state when raw parsing succeeds (enables editing)
-  useEffect(() => {
-    if (lessonPlan?.raw && !lessonPlan?.plano?.etapas) {
-      const parsed = tryParseRawPlan(lessonPlan.raw);
-      if (parsed) {
-        setLessonPlan({ ...lessonPlan, ...parsed });
-      }
-    }
-  }, [lessonPlan?.raw]);
+  // Normalize the current plan for display
+  const displayPlan = normalizePlan(lessonPlan);
 
   const handleFileUpload = async (e) => {
     const files = e.target.files;
@@ -318,6 +218,7 @@ export default function PlanoAula() {
       setPdfContent(allContent);
     } catch (err) {
       console.error('Erro ao processar arquivos:', err);
+      addNotification({ type: 'alert', title: 'Erro ao processar', message: 'Não foi possível processar os arquivos enviados.' });
     } finally {
       setProcessing(false);
     }
@@ -326,22 +227,25 @@ export default function PlanoAula() {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
+      // Task 2: Save config silently in background (for AI context only)
       await saveCourseConfig(config);
+
       let result = await generateLessonPlan({
         ...config,
         topicosExtraidos: extractedTopics,
         conteudoExtra: bibliography + '\n' + links,
       });
-      // If result came back as raw, try to parse it now
+
+      // Try to parse raw result into structured plan
       if (result?.raw && !result?.plano) {
         const parsed = tryParseRawPlan(result.raw);
         if (parsed) result = { ...result, ...parsed };
       }
+
       setLessonPlan(result);
-      await saveLessonPlan(result);
-      setShowConfig(false);
     } catch (err) {
       console.error('Erro ao gerar plano:', err);
+      addNotification({ type: 'alert', title: 'Erro na geração', message: 'Não foi possível gerar o plano de aula. Tente novamente.' });
     } finally {
       setGenerating(false);
     }
@@ -377,17 +281,37 @@ export default function PlanoAula() {
     setLessonPlan(updated);
   };
 
+  // Task 6: Save always inserts a new record + shows toast feedback
   const savePlan = async () => {
-    await saveLessonPlan(lessonPlan);
-    await saveCourseConfig(config);
+    setSaving(true);
+    try {
+      await saveLessonPlan(lessonPlan);
+      addNotification({
+        type: 'suggestion',
+        title: 'Plano salvo',
+        message: 'Plano de aula salvo com sucesso!',
+        duration: 5000,
+      });
+    } catch (err) {
+      console.error('Erro ao salvar plano:', err);
+      addNotification({ type: 'alert', title: 'Erro ao salvar', message: 'Não foi possível salvar o plano. Tente novamente.' });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const tipoConfig = {
-    aula: { label: 'Aula', icon: BookOpen, bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400', badge: 'bg-blue-500/20 text-blue-300', dot: 'bg-blue-400' },
-    prova: { label: 'Prova', icon: FileText, bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400', badge: 'bg-red-500/20 text-red-300', dot: 'bg-red-400' },
-    trabalho: { label: 'Trabalho', icon: Award, bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', badge: 'bg-amber-500/20 text-amber-300', dot: 'bg-amber-400' },
-    revisao: { label: 'Revisão', icon: CheckCircle2, bg: 'bg-violet-500/10', border: 'border-violet-500/30', text: 'text-violet-400', badge: 'bg-violet-500/20 text-violet-300', dot: 'bg-violet-400' },
-    recesso: { label: 'Recesso', icon: Calendar, bg: 'bg-dark-600', border: 'border-dark-500', text: 'text-dark-100', badge: 'bg-dark-500 text-dark-100', dot: 'bg-dark-300' },
+  // Task 1: Reset everything to start a new plan from scratch
+  const handleNewPlan = () => {
+    resetLessonPlan();
+    setConfig({ ...INITIAL_CONFIG });
+    setPdfContent('');
+    setLinks('');
+    setBibliography('');
+    setExtractedTopics(null);
+    setEditingAula(null);
+    setExpandedEtapas({});
+    setExpandedAulas({});
+    setStep(1);
   };
 
   return (
@@ -397,12 +321,20 @@ export default function PlanoAula() {
           <h1 className="text-2xl font-bold text-white">Gerador de Plano de Aula</h1>
           <p className="text-dark-100 mt-1">Configure sua disciplina e gere um plano com IA</p>
         </div>
-        {lessonPlan && (
-          <button onClick={savePlan} className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 cursor-pointer">
-            <Save className="w-4 h-4" />
-            Salvar Plano
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {lessonPlan && (
+            <>
+              <button onClick={handleNewPlan} className="flex items-center gap-2 px-4 py-2.5 bg-dark-700 text-gray-300 rounded-xl text-sm font-medium hover:bg-dark-600 cursor-pointer">
+                <Plus className="w-4 h-4" />
+                Novo Plano
+              </button>
+              <button onClick={savePlan} disabled={saving} className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50 cursor-pointer">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Salvar Plano
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Steps */}
@@ -430,7 +362,7 @@ export default function PlanoAula() {
         ))}
       </div>
 
-      {/* Step 1: Config */}
+      {/* Step 1: Configuração */}
       {step === 1 && (
         <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600 space-y-6">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -495,11 +427,11 @@ export default function PlanoAula() {
               <input type="number" min="0" max="5" value={config.trabalhosPorEtapa} onChange={e => setConfig(p => ({ ...p, trabalhosPorEtapa: Number(e.target.value) }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Peso Prova (%)</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Peso da Prova (%)</label>
               <input type="number" min="0" max="100" value={config.pesoProva} onChange={e => setConfig(p => ({ ...p, pesoProva: Number(e.target.value) }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Peso Trabalho (%)</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Peso do Trabalho (%)</label>
               <input type="number" min="0" max="100" value={config.pesoTrabalho} onChange={e => setConfig(p => ({ ...p, pesoTrabalho: Number(e.target.value) }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
           </div>
@@ -547,7 +479,7 @@ export default function PlanoAula() {
               onChange={e => setConfig(p => ({ ...p, insightsProfessor: e.target.value }))}
               rows={3}
               className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500 resize-none"
-              placeholder="Compartilhe como você gostaria de ensinar: metodologias preferidas (sala invertida, gamificação, projetos práticos), abordagem teórica vs prática, dinâmicas de grupo, etc."
+              placeholder="Compartilhe como você gostaria de ensinar: metodologias preferidas (sala invertida, gamificação, projetos práticos), abordagem teórica vs. prática, dinâmicas de grupo, etc."
             />
           </div>
 
@@ -568,11 +500,11 @@ export default function PlanoAula() {
               <input type="number" min="30" max="240" step="10" value={config.duracaoAula} onChange={e => setConfig(p => ({ ...p, duracaoAula: Number(e.target.value) }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Data início</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Data de início</label>
               <input type="date" value={config.dataInicio} onChange={e => setConfig(p => ({ ...p, dataInicio: e.target.value }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Data fim</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Data de término</label>
               <input type="date" value={config.dataFim} onChange={e => setConfig(p => ({ ...p, dataFim: e.target.value }))} className="w-full px-4 py-2.5 rounded-xl border border-dark-500 bg-dark-700 text-white text-sm outline-none focus:border-primary-500" />
             </div>
           </div>
@@ -585,7 +517,7 @@ export default function PlanoAula() {
         </div>
       )}
 
-      {/* Step 2: Material */}
+      {/* Step 2: Material de Apoio */}
       {step === 2 && (
         <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600 space-y-6">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
@@ -604,14 +536,14 @@ export default function PlanoAula() {
             {processing && (
               <div className="flex items-center gap-2 mt-3 text-primary-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Processando conteúdo com IA (NotebookLM)...</span>
+                <span className="text-sm">Processando conteúdo com IA...</span>
               </div>
             )}
             {extractedTopics && !extractedTopics.raw && (
-              <div className="mt-3 p-4 bg-green-50 border border-green-200 rounded-xl">
-                <p className="text-sm font-medium text-green-700 mb-2">Tópicos extraídos com sucesso!</p>
+              <div className="mt-3 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+                <p className="text-sm font-medium text-green-400 mb-2">Tópicos extraídos com sucesso!</p>
                 {extractedTopics.topicos && (
-                  <ul className="text-sm text-green-600 space-y-1 list-disc list-inside">
+                  <ul className="text-sm text-green-300 space-y-1 list-disc list-inside">
                     {(Array.isArray(extractedTopics.topicos) ? extractedTopics.topicos : []).map((t, i) => (
                       <li key={i}>{typeof t === 'string' ? t : t.nome || JSON.stringify(t)}</li>
                     ))}
@@ -654,7 +586,7 @@ export default function PlanoAula() {
         </div>
       )}
 
-      {/* Step 3: Generate + Calendar */}
+      {/* Step 3: Gerar Plano + Visualização */}
       {step === 3 && (
         <div className="space-y-6">
           {!lessonPlan && (
@@ -667,7 +599,7 @@ export default function PlanoAula() {
               </p>
               <div className="flex justify-center gap-3">
                 <button onClick={() => setStep(1)} className="px-6 py-2.5 bg-dark-700 text-gray-300 rounded-xl font-medium text-sm hover:bg-dark-600 cursor-pointer">
-                  ← Revisar Config
+                  ← Revisar Configuração
                 </button>
                 <button
                   onClick={handleGenerate}
@@ -690,8 +622,8 @@ export default function PlanoAula() {
             </div>
           )}
 
-          {/* Plan View */}
-          {normalizedPlan?.plano && (
+          {/* Task 3: Styled Plan View */}
+          {displayPlan?.plano?.etapas && (
             <div className="space-y-6">
               {/* Plan Header */}
               <div className="bg-gradient-to-br from-primary-600/20 via-dark-800 to-dark-800 p-8 rounded-2xl border border-primary-600/30 relative overflow-hidden">
@@ -702,16 +634,16 @@ export default function PlanoAula() {
                       <GraduationCap className="w-8 h-8 text-primary-400" />
                     </div>
                     <div className="flex-1">
-                      <h2 className="text-2xl font-bold text-white mb-2">{normalizedPlan.plano.titulo}</h2>
-                      {normalizedPlan.plano.ementa && (
-                        <p className="text-sm text-gray-400 leading-relaxed max-w-3xl">{normalizedPlan.plano.ementa}</p>
+                      <h2 className="text-2xl font-bold text-white mb-2">{displayPlan.plano.titulo}</h2>
+                      {displayPlan.plano.ementa && (
+                        <p className="text-sm text-gray-400 leading-relaxed max-w-3xl">{displayPlan.plano.ementa}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Plan Stats */}
                   {(() => {
-                    const etapas = normalizedPlan.plano.etapas || [];
+                    const etapas = displayPlan.plano.etapas || [];
                     const totalAulas = etapas.reduce((sum, e) => sum + (e.aulas?.filter(a => a.tipo === 'aula')?.length || 0), 0);
                     const totalProvas = etapas.reduce((sum, e) => sum + (e.aulas?.filter(a => a.tipo === 'prova')?.length || 0), 0);
                     const totalTrabalhos = etapas.reduce((sum, e) => sum + (e.aulas?.filter(a => a.tipo === 'trabalho')?.length || 0), 0);
@@ -720,28 +652,28 @@ export default function PlanoAula() {
                       <div className="flex flex-wrap gap-3 mt-5">
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-700/60 rounded-lg border border-dark-600">
                           <FolderOpen className="w-3.5 h-3.5 text-primary-400" />
-                          <span className="text-xs text-gray-300"><strong className="text-white">{etapas.length}</strong> etapas</span>
+                          <span className="text-xs text-gray-300"><strong className="text-white">{etapas.length}</strong> {etapas.length === 1 ? 'etapa' : 'etapas'}</span>
                         </div>
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-700/60 rounded-lg border border-dark-600">
                           <BookOpen className="w-3.5 h-3.5 text-blue-400" />
-                          <span className="text-xs text-gray-300"><strong className="text-white">{totalAulas}</strong> aulas</span>
+                          <span className="text-xs text-gray-300"><strong className="text-white">{totalAulas}</strong> {totalAulas === 1 ? 'aula' : 'aulas'}</span>
                         </div>
                         {totalProvas > 0 && (
                           <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-700/60 rounded-lg border border-dark-600">
                             <FileText className="w-3.5 h-3.5 text-red-400" />
-                            <span className="text-xs text-gray-300"><strong className="text-white">{totalProvas}</strong> provas</span>
+                            <span className="text-xs text-gray-300"><strong className="text-white">{totalProvas}</strong> {totalProvas === 1 ? 'prova' : 'provas'}</span>
                           </div>
                         )}
                         {totalTrabalhos > 0 && (
                           <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-700/60 rounded-lg border border-dark-600">
                             <Award className="w-3.5 h-3.5 text-amber-400" />
-                            <span className="text-xs text-gray-300"><strong className="text-white">{totalTrabalhos}</strong> trabalhos</span>
+                            <span className="text-xs text-gray-300"><strong className="text-white">{totalTrabalhos}</strong> {totalTrabalhos === 1 ? 'trabalho' : 'trabalhos'}</span>
                           </div>
                         )}
                         {totalRevisoes > 0 && (
                           <div className="flex items-center gap-2 px-3 py-1.5 bg-dark-700/60 rounded-lg border border-dark-600">
                             <CheckCircle2 className="w-3.5 h-3.5 text-violet-400" />
-                            <span className="text-xs text-gray-300"><strong className="text-white">{totalRevisoes}</strong> revisões</span>
+                            <span className="text-xs text-gray-300"><strong className="text-white">{totalRevisoes}</strong> {totalRevisoes === 1 ? 'revisão' : 'revisões'}</span>
                           </div>
                         )}
                       </div>
@@ -751,8 +683,8 @@ export default function PlanoAula() {
               </div>
 
               {/* Etapas */}
-              {normalizedPlan.plano.etapas?.map((etapa, etapaIdx) => {
-                const isExpanded = expandedEtapas[etapaIdx] !== false; // default expanded
+              {displayPlan.plano.etapas.map((etapa, etapaIdx) => {
+                const isExpanded = expandedEtapas[etapaIdx] !== false;
                 const aulaCount = etapa.aulas?.filter(a => a.tipo === 'aula')?.length || 0;
                 const provaCount = etapa.aulas?.filter(a => a.tipo === 'prova')?.length || 0;
                 const trabalhoCount = etapa.aulas?.filter(a => a.tipo === 'trabalho')?.length || 0;
@@ -779,9 +711,9 @@ export default function PlanoAula() {
                               </span>
                             )}
                             <div className="flex items-center gap-2">
-                              {aulaCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">{aulaCount} aulas</span>}
-                              {provaCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">{provaCount} provas</span>}
-                              {trabalhoCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">{trabalhoCount} trabalhos</span>}
+                              {aulaCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">{aulaCount} {aulaCount === 1 ? 'aula' : 'aulas'}</span>}
+                              {provaCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">{provaCount} {provaCount === 1 ? 'prova' : 'provas'}</span>}
+                              {trabalhoCount > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">{trabalhoCount} {trabalhoCount === 1 ? 'trabalho' : 'trabalhos'}</span>}
                             </div>
                           </div>
                         </div>
@@ -850,7 +782,7 @@ export default function PlanoAula() {
                                       onClick={() => setEditingAula(null)}
                                       className="px-4 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-medium cursor-pointer"
                                     >
-                                      Salvar
+                                      Concluir edição
                                     </button>
                                     <button
                                       onClick={() => removeAula(etapaIdx, aulaIdx)}
@@ -864,12 +796,10 @@ export default function PlanoAula() {
                               ) : (
                                 /* View mode */
                                 <div>
-                                  {/* Aula Header - always visible */}
                                   <div
                                     className="p-4 flex items-center gap-3 cursor-pointer hover:bg-white/[0.03] transition-colors"
                                     onClick={() => toggleAula(etapaIdx, aulaIdx)}
                                   >
-                                    {/* Type indicator dot */}
                                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${tipo.badge}`}>
                                       <TipoIcon className="w-4 h-4" />
                                     </div>
@@ -891,7 +821,7 @@ export default function PlanoAula() {
                                     <div className="flex items-center gap-2 shrink-0">
                                       <button
                                         onClick={(e) => { e.stopPropagation(); setEditingAula({ etapa: etapaIdx, aula: aulaIdx }); }}
-                                        className="p-1.5 hover:bg-white/10 rounded-lg cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="p-1.5 hover:bg-white/10 rounded-lg cursor-pointer"
                                       >
                                         <Edit3 className="w-3.5 h-3.5 text-gray-400" />
                                       </button>
@@ -971,20 +901,21 @@ export default function PlanoAula() {
                   disabled={generating}
                   className="flex items-center gap-2 px-6 py-2.5 bg-dark-700 text-gray-300 rounded-xl text-sm font-medium hover:bg-dark-600 cursor-pointer"
                 >
-                  <Sparkles className="w-4 h-4" />
+                  <RefreshCw className="w-4 h-4" />
                   Regenerar plano
                 </button>
               </div>
             </div>
           )}
 
-          {normalizedPlan?.raw && !normalizedPlan?.plano && (
-            <FormattedRawContent raw={lessonPlan.raw} />
+          {/* Fallback: raw AI output when structured parsing fails */}
+          {displayPlan?.raw && !displayPlan?.plano?.etapas && (
+            <FormattedRawContent raw={displayPlan.raw} />
           )}
         </div>
       )}
 
-      {/* Step 4: Saved Plans */}
+      {/* Step 4: Planos Salvos */}
       {step === 4 && (
         <div className="space-y-6">
           <div className="bg-dark-800 p-6 rounded-2xl border border-dark-600">
@@ -1005,7 +936,7 @@ export default function PlanoAula() {
               <div className="text-center py-12">
                 <FolderOpen className="w-12 h-12 text-dark-100 mx-auto mb-4" />
                 <p className="text-dark-100 text-sm">Nenhum plano salvo ainda.</p>
-                <p className="text-dark-100 text-xs mt-1">Gere e salve um plano na aba "Gerar Plano".</p>
+                <p className="text-dark-100 text-xs mt-1">Gere e salve um plano na aba &quot;Gerar Plano&quot;.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1019,11 +950,6 @@ export default function PlanoAula() {
                         <h3 className="font-semibold text-white truncate">
                           {plan.plano?.titulo || plan.titulo || 'Plano sem título'}
                         </h3>
-                        {plan._id?.startsWith('current_') && (
-                          <span className="inline-block mt-1 text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded-full">
-                            Plano atual
-                          </span>
-                        )}
                         {plan.plano?.ementa && (
                           <p className="text-sm text-dark-100 mt-1 line-clamp-2">{plan.plano.ementa}</p>
                         )}
@@ -1035,12 +961,7 @@ export default function PlanoAula() {
                           )}
                           {plan.plano?.etapas && (
                             <span className="text-xs text-primary-400">
-                              {plan.plano.etapas.length} etapa(s) · {plan.plano.etapas.reduce((sum, e) => sum + (e.aulas?.length || 0), 0)} aulas
-                            </span>
-                          )}
-                          {plan.userId && (
-                            <span className="text-xs bg-primary-600/20 text-primary-400 px-2 py-0.5 rounded-full">
-                              {plan.userId}
+                              {plan.plano.etapas.length} {plan.plano.etapas.length === 1 ? 'etapa' : 'etapas'} · {plan.plano.etapas.reduce((sum, e) => sum + (e.aulas?.length || 0), 0)} aulas
                             </span>
                           )}
                         </div>

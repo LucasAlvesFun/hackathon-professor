@@ -103,6 +103,10 @@ export function ClassroomProvider({ children }) {
     return plan;
   }, []);
 
+  const resetLessonPlan = useCallback(() => {
+    setLessonPlan(null);
+  }, []);
+
   const saveLessonPlan = useCallback(async (plan) => {
     const normalized = normalizePlan(plan) || plan;
     setLessonPlan(normalized);
@@ -111,14 +115,13 @@ export function ClassroomProvider({ children }) {
     const titulo = plan?.plano?.titulo || 'Plano sem título';
     const planId = `plan_${Date.now()}`;
     try {
-      // Save as current plan (for quick load)
-      await dbUpsert('lesson_plans', `current_${userId}`, { ...plan, userId, titulo, updatedAt: now });
-      // Also save a named copy
+      // Always insert a new record (append) — never overwrite previous plans
       await dbPost('lesson_plans', { _id: planId, ...plan, userId, titulo, createdAt: now, updatedAt: now });
       // Refresh saved plans list
       await listSavedPlans();
     } catch (err) {
       console.error('Erro ao salvar plano:', err);
+      throw err;
     }
   }, [user]);
 
@@ -180,7 +183,7 @@ export function ClassroomProvider({ children }) {
   return (
     <ClassroomContext.Provider value={{
       students, fetchStudents, addStudent, updateStudentData,
-      lessonPlan, setLessonPlan, saveLessonPlan, loadLessonPlan,
+      lessonPlan, setLessonPlan, saveLessonPlan, loadLessonPlan, resetLessonPlan,
       savedPlans, listSavedPlans, loadSavedPlan,
       courseConfig, setCourseConfig, saveCourseConfig, loadCourseConfig,
       aiAnalysis, setAiAnalysis,
