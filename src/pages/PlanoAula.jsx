@@ -542,13 +542,6 @@ export default function PlanoAula() {
             {extractedTopics && !extractedTopics.raw && (
               <div className="mt-3 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
                 <p className="text-sm font-medium text-green-400 mb-2">Tópicos extraídos com sucesso!</p>
-                {extractedTopics.topicos && (
-                  <ul className="text-sm text-green-300 space-y-1 list-disc list-inside">
-                    {(Array.isArray(extractedTopics.topicos) ? extractedTopics.topicos : []).map((t, i) => (
-                      <li key={i}>{typeof t === 'string' ? t : t.nome || JSON.stringify(t)}</li>
-                    ))}
-                  </ul>
-                )}
               </div>
             )}
           </div>
